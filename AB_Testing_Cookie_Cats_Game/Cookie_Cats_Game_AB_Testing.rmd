@@ -1,0 +1,175 @@
+--- 
+output:
+  html_document: default
+  pdf_document: default
+---
+
+## Introduction
+
+This notebook explores an A/B test conducted in the mobile puzzle game Cookie Cats. The game developers experimented with moving a progression gate from level 30 to level 40 in order to understand whether this change affects short-term and long-term player retention. The goal of this analysis is to compare user behavior across the two versions of the game and form a data-driven conclusion about whether the new gate placement improves retention or unintentionally harms engagement. The dataset contains player activity logs, retention outcomes, and the assigned experimental group. Through exploratory analysis, we aim to understand the structure of the data, compare retention patterns across versions, and prepare the ground for statistical testing.
+
+```{r}
+options(warn = -1)
+library(tidyverse)
+library(dplyr)
+library(broom)
+library(infer)
+library(ggplot2)
+library(janitor)
+library(knitr)
+library(kableExtra)
+```
+
+```{r}
+df <- read_csv("cookie_cats.csv") %>% clean_names()
+df$version <- factor(df$version, levels=c("gate_30","gate_40"))
+```
+
+## Exploratory Data Analysis
+
+Understanding retention differences at a high level. This initial plot compares the average one-day retention rates between the two game versions to give an early indication of how the gate change may influence engagement.
+
+```{r}
+df %>%
+  group_by(version) %>%
+  summarise(retention_1 = mean(retention_1),
+            retention_7 = mean(retention_7)) %>%
+  ggplot(aes(version, retention_1)) +
+  geom_col()
+```
+
+This comparison shows whether the treatment group appears to retain better or worse on the first day, helping identify whether the difference looks meaningful enough for further investigation.
+
+Inspecting the structure of the dataset. Understanding the variables and ensuring the dataset is clean is necessary before deeper analysis.
+
+```{r}
+str(df)
+head(df)
+
+summary(df)
+
+colSums(is.na(df))
+
+sapply(df, function(x) length(unique(x)))
+```
+
+The dataset appears clean, with no missing entries in key fields. The retention variables are binary, and the version variable contains two balanced categories, indicating readiness for A/B testing.
+
+Checking group sizes. Balanced group sizes ensure that differences in outcomes are not driven by uneven exposure.
+
+```{r}
+df %>% 
+  count(version) %>% 
+  mutate(prop = n / sum(n))
+```
+
+Group counts are nearly equal, confirming proper random assignment.
+
+Summary of retention by group. This helps quantify central tendencies in retention behavior.
+
+```{r}
+df %>%
+  group_by(version) %>%
+  summarise(
+    mean_retention_1 = mean(retention_1),
+    mean_retention_7 = mean(retention_7),
+    sd_retention_1 = sd(retention_1),
+    sd_retention_7 = sd(retention_7),
+    n = n()
+  )
+```
+
+The differences in means provide early clues about performance differences, while similar standard deviations confirm consistent variability across groups.
+
+Distribution of 1-day retention. This visual highlights how many players returned on the next day.
+
+```{r}
+ggplot(df, aes(x = retention_1, fill = version)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Distribution of 1-Day Retention",
+       x = "Retention (1 = retained next day)", y = "Count")
+```
+
+The bar heights reveal the relative proportions of retained and non-retained users across the two groups, giving an immediate impression of performance differences.
+
+Distribution of 7-day retention. This plot examines longer-term engagement.
+
+```{r}
+ggplot(df, aes(x = retention_7, fill = version)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Distribution of 7-Day Retention",
+       x = "Retention (1 = retained after 7 days)", y = "Count")
+```
+
+Seven-day retention is typically much lower, and visible differences between versions suggest whether the gate change affected deeper engagement patterns.
+
+Comparing 1-day retention rates with numeric labels for clarity.
+
+```{r}
+df %>%
+  group_by(version) %>%
+  summarise(rate = mean(retention_1)) %>%
+  ggplot(aes(version, rate, fill = version)) +
+  geom_col(width = 0.5) +
+  geom_text(aes(label = round(rate, 3)), vjust = -0.5) +
+  labs(title = "1-Day Retention Rate by Version",
+       x = "Group", y = "Retention Rate")
+```
+
+The numeric labels make differences easier to interpret and help determine whether they justify formal testing.
+
+Comparing 7-day retention rates in the same format for consistency.
+
+```{r}
+df %>%
+  group_by(version) %>%
+  summarise(rate = mean(retention_7)) %>%
+  ggplot(aes(version, rate, fill = version)) +
+  geom_col(width = 0.5) +
+  geom_text(aes(label = round(rate, 3)), vjust = -0.5) +
+  labs(title = "7-Day Retention Rate by Version",
+       x = "Group", y = "Retention Rate")
+```
+
+This metric reflects long-term engagement, offering deeper insight into the impact of the gate change.
+
+Comparing both retention metrics side by side.
+
+```{r}
+df_long <- df %>%
+  pivot_longer(cols = c(retention_1, retention_7),
+               names_to = "metric",
+               values_to = "value")
+
+ggplot(df_long, aes(x = version, y = value, fill = version)) +
+  geom_bar(stat="summary", fun="mean", position="dodge") +
+  facet_wrap(~ metric) +
+  labs(title = "Comparison of Retention Metrics",
+       y = "Mean Retention Rate")
+```
+
+Seeing both short- and long-term retention together helps distinguish whether the gate change affected early engagement, long-term engagement, or both.
+
+User-level jitter plot to examine individual variation.
+
+```{r}
+ggplot(df, aes(x = version, y = retention_1, color = version)) +
+  geom_jitter(alpha = 0.2, width = 0.2) +
+  labs(title = "User-Level Scatter of 1-Day Retention",
+       y = "Retention")
+```
+
+The jitter spread shows variation in individual retention outcomes and confirms that no unusual clustering is influencing the results.
+
+Correlation between 1-day and 7-day retention. This examines whether early engagement predicts long-term engagement.
+
+```{r}
+cor(df$retention_1, df$retention_7)
+
+ggplot(df, aes(x = retention_1, y = retention_7)) +
+  geom_jitter(alpha = 0.2, color = "steelblue") +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "Correlation Between Day-1 and Day-7 Retention")
+```
+
+There is a clear relationship between returning on the first day and returning after a week, showing that early retention plays a strong role in predicting deeper engagement.
